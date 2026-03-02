@@ -11,8 +11,6 @@ import os
 import numpy as np
 import torch
 
-from dynamic.analysis.subregions import get_D
-from dynamic.models.alrnn import ALRNN
 from dynamic.systems.lorenz63 import generate_trajectory
 from dynamic.training.configs import TrainingConfig
 from dynamic.training.trainer import SparseTeacherForcingTrainer

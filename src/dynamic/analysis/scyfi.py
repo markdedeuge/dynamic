@@ -146,7 +146,9 @@ def scy_fi(
     i = -1
     while i < outer_loop_iterations:
         i += 1
-        relu_matrix_list = construct_relu_matrix_list(dim, order)
+        relu_matrix_list = construct_relu_matrix_list(
+            dim, order, dtype=A.dtype
+        )
         difference_relu_matrices = 1
         c = 0
 
@@ -162,10 +164,12 @@ def scy_fi(
                 )
 
                 # Build D matrices from the candidate trajectory
-                traj_relu = torch.zeros(order, dim, dim)
+                traj_relu = torch.zeros(
+                    order, dim, dim, dtype=A.dtype
+                )
                 for j in range(order):
                     traj_relu[j] = torch.diag(
-                        (trajectory[j] > 0).float()
+                        (trajectory[j] > 0).to(A.dtype)
                     )
 
                 # Check self-consistency
@@ -196,11 +200,15 @@ def scy_fi(
 
                 # Update D matrices for next iteration
                 if torch.allclose(relu_matrix_list, traj_relu):
-                    relu_matrix_list = construct_relu_matrix_list(dim, order)
+                    relu_matrix_list = construct_relu_matrix_list(
+                        dim, order, dtype=A.dtype
+                    )
                 else:
                     relu_matrix_list = traj_relu
             else:
-                relu_matrix_list = construct_relu_matrix_list(dim, order)
+                relu_matrix_list = construct_relu_matrix_list(
+                    dim, order, dtype=A.dtype
+                )
 
     return cycles_found, eigvals_found
 
@@ -288,10 +296,14 @@ def scy_fi_sh(
                 )
 
                 # Build D matrices from candidate trajectory
-                traj_relu = torch.zeros(order, hidden_dim, hidden_dim)
+                traj_relu = torch.zeros(
+                    order, hidden_dim, hidden_dim, dtype=W1.dtype
+                )
                 for j in range(order):
                     hidden_act = W2 @ trajectory[j] + h2
-                    traj_relu[j] = torch.diag((hidden_act > 0).float())
+                    traj_relu[j] = torch.diag(
+                        (hidden_act > 0).to(W1.dtype)
+                    )
 
                 # Check self-consistency
                 difference_relu_matrices = 0

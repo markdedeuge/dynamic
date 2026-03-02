@@ -14,11 +14,11 @@ import torch
 
 from dynamic.analysis.manifolds import construct_manifold
 from dynamic.analysis.quality import delta_sigma_statistic
-from dynamic.analysis.subregions import classify_point, get_D
+from dynamic.analysis.subregions import classify_point
 from dynamic.systems.duffing import generate_trajectory
 from dynamic.training.configs import DUFFING_CONFIG
 from dynamic.training.trainer import SparseTeacherForcingTrainer
-from dynamic.viz.plotting import plot_basins_2d, plot_state_space_2d
+from dynamic.viz.plotting import plot_state_space_2d
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 

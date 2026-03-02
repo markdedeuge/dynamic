@@ -13,9 +13,9 @@ import numpy as np
 import torch
 
 from dynamic.analysis.manifolds import construct_manifold
-from dynamic.analysis.quality import delta_sigma, delta_sigma_statistic
+from dynamic.analysis.quality import delta_sigma_statistic
 from dynamic.analysis.scyfi import FixedPoint
-from dynamic.analysis.subregions import classify_point, get_D
+from dynamic.analysis.subregions import classify_point
 from dynamic.models.plrnn import PLRNN
 from dynamic.systems.pl_map import PLMap
 from dynamic.viz.plotting import plot_state_space_2d
@@ -28,9 +28,9 @@ def plmap_to_plrnn(pl_map: PLMap) -> PLRNN:
     params = pl_map.to_plrnn_params()
     model = PLRNN(M=2)
     with torch.no_grad():
-        A = params["A"]
-        W = params["W"]
-        h = params["h"]
+        A = torch.as_tensor(params["A"], dtype=torch.float32)
+        W = torch.as_tensor(params["W"], dtype=torch.float32)
+        h = torch.as_tensor(params["h"], dtype=torch.float32)
         model.A.copy_(torch.diag(A) if A.dim() == 2 else A)
         model.W.copy_(W)
         model.h.copy_(h)

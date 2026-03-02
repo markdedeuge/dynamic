@@ -35,15 +35,20 @@ class TestCompareStabilityXval:
         ]
         py_result = compare_stability(eigvals, neighbours)
 
-        # Julia side
+        # Julia: need to pass Array{Array} properly
         jl_result_raw = jw.jl.seval(
             """(ev, n1, n2) -> begin
-                SCYFI.compare_stability(ev, [n1, n2])
+                SCYFI.compare_stability(
+                    collect(ev),
+                    [collect(n1), collect(n2)]
+                )
             end"""
         )(eigvals, neighbours[0], neighbours[1])
 
         if py_result is None:
-            assert jl_result_raw is None or jw.jl.seval("isnothing")(jl_result_raw)
+            assert jl_result_raw is None or jw.jl.seval("isnothing")(
+                jl_result_raw
+            )
         else:
             jl_result = [int(x) for x in jl_result_raw]
             # Julia is 1-indexed, convert to 0-indexed
@@ -60,12 +65,17 @@ class TestCompareStabilityXval:
 
         jl_result_raw = jw.jl.seval(
             """(ev, n1) -> begin
-                SCYFI.compare_stability(ev, [n1])
+                SCYFI.compare_stability(
+                    collect(ev),
+                    [collect(n1)]
+                )
             end"""
         )(eigvals, neighbours[0])
 
         assert py_result is None
-        assert jl_result_raw is None or jw.jl.seval("isnothing")(jl_result_raw)
+        assert jl_result_raw is None or jw.jl.seval("isnothing")(
+            jl_result_raw
+        )
 
 
 # ======================================================================
@@ -87,15 +97,20 @@ class TestDistanceMetricsXval:
         ]
         py_dists = get_minimal_state_space_distances(cycle, neighbours)
 
-        # Call Julia
+        # Julia: vectors in arrays
         jl_dists = jw.jl.seval(
-            """(c, n1, n2) -> begin
-                SCYFI.get_minimal_state_space_distances(c, [n1, n2])
+            """(c1, n1, n2) -> begin
+                cycle = [Vector{Float64}(c1)]
+                neigh = [
+                    [Vector{Float64}(n1)],
+                    [Vector{Float64}(n2)],
+                ]
+                SCYFI.get_minimal_state_space_distances(cycle, neigh)
             end"""
         )(
-            [cycle[0].numpy()],
-            [neighbours[0][0].numpy()],
-            [neighbours[1][0].numpy()],
+            cycle[0].numpy(),
+            neighbours[0][0].numpy(),
+            neighbours[1][0].numpy(),
         )
         jl_dists_py = [float(jl_dists[i]) for i in range(len(jl_dists))]
 
@@ -113,7 +128,10 @@ class TestDistanceMetricsXval:
 
         jl_dists = jw.jl.seval(
             """(ev, n1, n2) -> begin
-                SCYFI.get_minimal_eigenvalue_distances(ev, [n1, n2])
+                SCYFI.get_minimal_eigenvalue_distances(
+                    Vector{Float64}(ev),
+                    [Vector{Float64}(n1), Vector{Float64}(n2)]
+                )
             end"""
         )(eigvals, neighbours[0], neighbours[1])
         jl_dists_py = [float(jl_dists[i]) for i in range(len(jl_dists))]

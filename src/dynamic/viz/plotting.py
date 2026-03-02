@@ -16,7 +16,6 @@ import numpy as np
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from numpy import ndarray
-    from torch import Tensor
 
     from dynamic.analysis.manifolds import ManifoldSegment
     from dynamic.analysis.scyfi import FixedPoint
@@ -351,7 +350,11 @@ def plot_lyapunov_spectrum(
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 5))
     for i in range(exponents.shape[1]):
-        ax.plot(param_values, exponents[:, i], linewidth=1.5, label=f"$\\lambda_{i + 1}$")
+        label = f"$\\lambda_{i + 1}$"
+        ax.plot(
+            param_values, exponents[:, i],
+            linewidth=1.5, label=label,
+        )
     ax.axhline(0, color="black", linestyle="--", alpha=0.5)
     ax.set_xlabel(param_name)
     ax.set_ylabel("Lyapunov exponent")

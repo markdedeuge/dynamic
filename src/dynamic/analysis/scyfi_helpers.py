@@ -17,7 +17,9 @@ from torch import Tensor
 # ---------------------------------------------------------------------------
 # ReLU matrix construction
 # ---------------------------------------------------------------------------
-def construct_relu_matrix(quadrant_number: int, dim: int) -> Tensor:
+def construct_relu_matrix(
+    quadrant_number: int, dim: int, *, dtype=None
+) -> Tensor:
     """Single diagonal D matrix from an integer quadrant index.
 
     The binary representation of ``quadrant_number`` encodes which
@@ -29,6 +31,8 @@ def construct_relu_matrix(quadrant_number: int, dim: int) -> Tensor:
         Integer in ``[0, 2^dim)``.
     dim : int
         Dimensionality.
+    dtype : torch.dtype, optional
+        Output dtype (default: torch default).
 
     Returns
     -------
@@ -36,11 +40,13 @@ def construct_relu_matrix(quadrant_number: int, dim: int) -> Tensor:
         Diagonal matrix of shape ``(dim, dim)``.
     """
     bits = format(quadrant_number, f"0{dim}b")
-    diag = torch.tensor([float(b) for b in reversed(bits)])
+    diag = torch.tensor([float(b) for b in reversed(bits)], dtype=dtype)
     return torch.diag(diag)
 
 
-def construct_relu_matrix_list(dim: int, order: int) -> Tensor:
+def construct_relu_matrix_list(
+    dim: int, order: int, *, dtype=None
+) -> Tensor:
     """Random sequence of D matrices for ``order`` subregions.
 
     Parameters
@@ -49,16 +55,18 @@ def construct_relu_matrix_list(dim: int, order: int) -> Tensor:
         Dimensionality.
     order : int
         Number of D matrices to generate.
+    dtype : torch.dtype, optional
+        Output dtype (default: torch default).
 
     Returns
     -------
     Tensor
         Shape ``(order, dim, dim)``.
     """
-    D_list = torch.zeros(order, dim, dim)
+    D_list = torch.zeros(order, dim, dim, dtype=dtype)
     for i in range(order):
         n = int(torch.randint(0, 2**dim, (1,)).item())
-        D_list[i] = construct_relu_matrix(n, dim)
+        D_list[i] = construct_relu_matrix(n, dim, dtype=dtype)
     return D_list
 
 
