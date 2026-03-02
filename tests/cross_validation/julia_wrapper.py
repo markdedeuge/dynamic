@@ -30,22 +30,23 @@ class JuliaScyfi:
     def _to_julia_matrix(self, t: Tensor) -> object:
         """Convert (M, M) torch tensor → Julia Matrix{Float64}."""
         arr = t.detach().double().numpy()
-        return self.jl.seval("collect")(arr)
+        return self.jl.seval("Matrix{Float64}")(arr)
 
     def _to_julia_vector(self, t: Tensor) -> object:
         """Convert (M,) torch tensor → Julia Vector{Float64}."""
         arr = t.detach().double().numpy()
-        return self.jl.seval("collect")(arr)
+        return self.jl.seval("Vector{Float64}")(arr)
 
     def _to_julia_d_list(self, d_list: Tensor) -> object:
         """Convert (order, dim, dim) → Julia (dim, dim, order) 3D array."""
-        # Transpose from (order, dim, dim) to (dim, dim, order)
         arr = d_list.detach().double().numpy().transpose(1, 2, 0).copy()
-        return self.jl.seval("collect")(arr)
+        return self.jl.seval("Array{Float64,3}")(arr)
 
     def _from_julia_matrix(self, jl_mat) -> Tensor:
-        """Julia Matrix → (M, M) float64 tensor."""
-        arr = np.array(jl_mat, dtype=np.float64)
+        """Julia Matrix/Diagonal/UniformScaling → (M, M) float64 tensor."""
+        # Materialise abstract types
+        mat = self.jl.seval("x -> Matrix{Float64}(x)")(jl_mat)
+        arr = np.array(mat, dtype=np.float64)
         return torch.from_numpy(arr)
 
     def _from_julia_vector(self, jl_vec) -> Tensor:
@@ -62,34 +63,56 @@ class JuliaScyfi:
     # ------------------------------------------------------------------
     def construct_relu_matrix(self, quadrant: int, dim: int) -> Tensor:
         """Call Julia construct_relu_matrix."""
-        result = self.jl.seval("SCYFI.construct_relu_matrix")(
-            self.jl.seval("Int128")(quadrant), dim
-        )
+        result = self.jl.seval(
+            "(q, d) -> Array(SCYFI.construct_relu_matrix(Int128(q), d))"
+        )(quadrant, dim)
         return self._from_julia_matrix(result)
 
     def get_factor_in_front_of_z(
         self, A: Tensor, W: Tensor, D_list: Tensor, order: int
     ) -> Tensor:
         """Call Julia get_factor_in_front_of_z."""
-        result = self.jl.seval("SCYFI.get_factor_in_front_of_z")(
+        result = self.jl.seval(
+            "(A,W,D,o) -> Matrix{Float64}(SCYFI.get_factor_in_front_of_z(A,W,D,o))"
+        )(
             self._to_julia_matrix(A),
             self._to_julia_matrix(W),
             self._to_julia_d_list(D_list),
             order,
         )
-        return self._from_julia_matrix(result)
+        arr = np.array(result, dtype=np.float64)
+        return torch.from_numpy(arr)
 
     def get_factor_in_front_of_h(
         self, A: Tensor, W: Tensor, D_list: Tensor, order: int
     ) -> Tensor:
-        """Call Julia get_factor_in_front_of_h."""
-        result = self.jl.seval("SCYFI.get_factor_in_front_of_h")(
+        """Call Julia get_factor_in_front_of_h.
+
+        Note: Julia convention is to receive D_list[:,:,2:end] (pre-sliced),
+        while Python's version takes the full D_list and skips index 0.
+        We slice D_list[1:] before passing to Julia.
+        """
+        dim = A.shape[0]
+        # Slice D_list to match Julia's convention: D_list[:,:,2:end]
+        d_sliced = D_list[1:]  # Python (order, dim, dim) → skip first
+        result = self.jl.seval(
+            """(A,W,D,o,dim) -> begin
+                r = SCYFI.get_factor_in_front_of_h(A,W,D,o)
+                if r isa LinearAlgebra.UniformScaling
+                    Matrix{Float64}(r, dim, dim)
+                else
+                    Matrix{Float64}(r)
+                end
+            end"""
+        )(
             self._to_julia_matrix(A),
             self._to_julia_matrix(W),
-            self._to_julia_d_list(D_list),
+            self._to_julia_d_list(d_sliced),
             order,
+            dim,
         )
-        return self._from_julia_matrix(result)
+        arr = np.array(result, dtype=np.float64)
+        return torch.from_numpy(arr)
 
     def get_cycle_point_candidate(
         self, A: Tensor, W: Tensor, D_list: Tensor, h: Tensor, order: int

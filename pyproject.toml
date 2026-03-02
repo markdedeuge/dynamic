@@ -24,6 +24,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "julia: cross-validation tests requiring Julia (deselect with: -m 'not julia')",
+]
 
 [tool.ruff]
 target-version = "py311"
