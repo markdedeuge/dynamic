@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+reference/
+
+# Virtual environments
+.venv/
+
+# uv
+uv.lock
+
+# Ruff
+.ruff_cache/
+
+# Pytest
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+
+# PyTorch model artifacts
+*.pt
+*.pth
+*.ckpt
+
+# Logs & outputs
+*.log
+outputs/
+results/
+wandb/
