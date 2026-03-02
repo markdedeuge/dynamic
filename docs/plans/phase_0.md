@@ -1,6 +1,6 @@
 # Phase 0: Dependencies & Project Skeleton
 
-**Status**: Not started
+**Status**: ✅ Complete
 **Depends on**: Nothing
 **Estimated effort**: Small
 

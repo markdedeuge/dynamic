@@ -6,8 +6,8 @@ Tests written FIRST per TDD methodology. Models are in:
 - dynamic.models.alrnn (ALRNN)
 """
 
-import torch
 import pytest
+import torch
 
 
 # ---------------------------------------------------------------------------
@@ -72,19 +72,18 @@ class TestPLRNN:
         expected = torch.diag(model.A) + model.W @ D
         assert torch.allclose(J, expected, atol=1e-6)
 
-    def test_jacobian_finite_difference(self, model):
-        """Jacobian matches finite-difference approximation."""
-        z = torch.tensor([1.0, 2.0, 0.5, 3.0])  # all positive to avoid kink
-        J = model.get_jacobian(z)
-        eps = 1e-5
-        J_fd = torch.zeros(4, 4)
-        f0 = model.forward(z)
+    def test_jacobian_autograd(self, model):
+        """Jacobian matches PyTorch autograd computation."""
+        z = torch.tensor([1.0, 2.0, 0.5, 3.0], requires_grad=True)
+        out = model.forward(z)
+        J_auto = torch.zeros(4, 4)
         for i in range(4):
-            z_pert = z.clone()
-            z_pert[i] += eps
-            f1 = model.forward(z_pert)
-            J_fd[:, i] = (f1 - f0) / eps
-        assert torch.allclose(J, J_fd, atol=1e-4)
+            if z.grad is not None:
+                z.grad.zero_()
+            out[i].backward(retain_graph=True)
+            J_auto[i] = z.grad.clone()
+        J = model.get_jacobian(z.detach())
+        assert torch.allclose(J.detach(), J_auto, atol=1e-6)
 
     def test_subregion_id_type(self, model):
         """Subregion ID is a hashable tuple of ints."""
@@ -133,6 +132,25 @@ class TestPLRNN:
         D = model.get_D(z)
         pl_out = (torch.diag(model.A) + model.W @ D) @ z + model.h
         assert torch.allclose(relu_out, pl_out, atol=1e-6)
+
+    def test_subregion_count(self):
+        """Base PLRNN with M=3 has at most 2^3 = 8 subregions."""
+        from dynamic.models.plrnn import PLRNN
+
+        torch.manual_seed(0)
+        model = PLRNN(M=3)
+        seen = set()
+        for _ in range(500):
+            z = torch.randn(3) * 5
+            seen.add(model.get_subregion_id(z))
+        assert len(seen) <= 8
+
+    def test_trajectory_deterministic(self, model):
+        """Same z0 gives identical trajectory."""
+        z0 = torch.tensor([0.5, -0.3, 1.2, -0.8])
+        traj_a = model.forward_trajectory(z0, T=10)
+        traj_b = model.forward_trajectory(z0, T=10)
+        assert torch.allclose(traj_a, traj_b)
 
 
 # ---------------------------------------------------------------------------

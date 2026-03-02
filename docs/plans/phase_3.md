@@ -1,6 +1,6 @@
 # Phase 3: Training Infrastructure
 
-**Status**: Not started
+**Status**: ✅ Complete
 **Depends on**: Phase 1 (models), Phase 2 (systems for data)
 **Estimated effort**: Medium
 
@@ -46,7 +46,7 @@ Sample 1% of traversed subregions. Penalizes negative Jacobian determinants to e
 | `test_teacher_forcing_interval` | States are replaced at exactly every τ steps |
 | `test_teacher_forcing_no_replace` | States between replacements evolve via model forward |
 | `test_training_loss_decreases` | 100 epochs on Duffing → final loss < initial loss |
-| `test_config_loads` | All 6 experiment configs (from Table 1) instantiate correctly |
+| `test_config_loads` | All 5 experiment configs (from Table 1) instantiate correctly |
 | `test_config_fields` | Each config has: model, M, H/P, lr, epochs, τ, λ_invert |
 
 ## Files
@@ -57,7 +57,7 @@ Sample 1% of traversed subregions. Penalizes negative Jacobian determinants to e
 def mse_loss(predictions: Tensor, targets: Tensor) -> Tensor
 def invertibility_regularization(
     model: nn.Module,
-    subregion_ids: list[tuple],
+    jacobians: list[Tensor],
     lambda_inv: float,
 ) -> Tensor
 ```
@@ -68,8 +68,9 @@ def invertibility_regularization(
 class SparseTeacherForcingTrainer:
     def __init__(self, model, config)
     def train(self, data: Tensor, epochs: int) -> list[float]  # loss history
-    def _teacher_force_step(self, z: Tensor, x: Tensor) -> Tensor
-    def _collect_subregions(self, trajectory: Tensor) -> list[tuple]
+    def _forward_with_forcing(self, data: Tensor, z0: Tensor) -> tuple[Tensor, Tensor]
+    def _collect_jacobians(self, trajectory: Tensor) -> list[Tensor]
+    def _get_forcing_indices(self, seq_len: int) -> list[int]
 ```
 
 ### [NEW] `src/dynamic/training/configs.py`
