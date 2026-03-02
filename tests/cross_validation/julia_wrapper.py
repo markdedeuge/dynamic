@@ -290,7 +290,7 @@ class JuliaScyfi:
                 all_eigvals = Array[]
                 for order in 1:max_order
                     cycles, evs = SCYFI.scy_fi(
-                        Diagonal(A), W1, W2, h1, h2, order, all_cycles,
+                        A, W1, W2, h1, h2, order, all_cycles,
                         outer_loop_iterations=outer,
                         inner_loop_iterations=inner,
                     )

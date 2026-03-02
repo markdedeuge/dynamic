@@ -16,36 +16,66 @@ from dynamic.analysis.manifolds import construct_manifold
 from dynamic.analysis.quality import delta_sigma_statistic
 from dynamic.analysis.scyfi import FixedPoint
 from dynamic.analysis.subregions import classify_point
-from dynamic.models.plrnn import PLRNN
 from dynamic.systems.pl_map import PLMap
 from dynamic.viz.plotting import plot_state_space_2d
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
 
-def plmap_to_plrnn(pl_map: PLMap) -> PLRNN:
-    """Convert a PLMap to a PLRNN model."""
-    params = pl_map.to_plrnn_params()
-    model = PLRNN(M=2)
-    with torch.no_grad():
-        A = torch.as_tensor(params["A"], dtype=torch.float32)
-        W = torch.as_tensor(params["W"], dtype=torch.float32)
-        h = torch.as_tensor(params["h"], dtype=torch.float32)
-        model.A.copy_(torch.diag(A) if A.dim() == 2 else A)
-        model.W.copy_(W)
-        model.h.copy_(h)
-    return model
+class PLMapModel(torch.nn.Module):
+    """Thin nn.Module wrapper around PL map (A + WD) z + h.
+
+    Uses the full A matrix from to_plrnn_params(), unlike the diagonal-A
+    PLRNN class. Provides the same get_jacobian/get_D/get_subregion_id API.
+    """
+
+    def __init__(self, pl_map: PLMap):
+        super().__init__()
+        params = pl_map.to_plrnn_params()
+        self.A = torch.nn.Parameter(
+            torch.as_tensor(params["A"], dtype=torch.float32),
+        )
+        self.W = torch.nn.Parameter(
+            torch.as_tensor(params["W"], dtype=torch.float32),
+        )
+        self.h = torch.nn.Parameter(
+            torch.as_tensor(params["h"], dtype=torch.float32),
+        )
+        self.M = self.h.shape[0]
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        D = torch.diag((z > 0).float())
+        return (self.A + self.W @ D) @ z + self.h
+
+    def get_D(self, z: torch.Tensor) -> torch.Tensor:
+        return torch.diag((z > 0).float())
+
+    def get_jacobian(self, z: torch.Tensor) -> torch.Tensor:
+        D = self.get_D(z)
+        return self.A + self.W @ D
+
+    def get_subregion_id(self, z: torch.Tensor) -> tuple:
+        return tuple(int(x > 0) for x in z.tolist())
+
+    def forward_trajectory(self, z0: torch.Tensor, T: int) -> torch.Tensor:
+        traj = [z0]
+        z = z0
+        with torch.no_grad():
+            for _ in range(T):
+                z = self.forward(z)
+                traj.append(z)
+        return torch.stack(traj)
 
 
-def find_saddle_points(model: PLRNN) -> list[FixedPoint]:
+def find_saddle_points(model) -> list[FixedPoint]:
     """Find saddle fixed points by exhaustive subregion search."""
-    M = model.A.shape[0]
+    M = model.M
     saddles = []
 
     for quad in range(2**M):
         bits = tuple((quad >> i) & 1 for i in range(M))
         D = torch.diag(torch.tensor(bits, dtype=torch.float32))
-        J = torch.diag(model.A) + model.W @ D
+        J = model.A + model.W @ D
         I_minus_J = torch.eye(M) - J
 
         try:
@@ -79,7 +109,7 @@ def run_fig3():
 
     # Fig 3A left — simple saddle manifolds
     pl_map = PLMap.fig3a_left()
-    model = plmap_to_plrnn(pl_map)
+    model = PLMapModel(pl_map)
 
     print("Finding saddle points...")
     saddles = find_saddle_points(model)

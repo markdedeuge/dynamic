@@ -132,7 +132,7 @@ def construct_relu_matrix_pool(
         Shape ``(N, hidden_dim, hidden_dim)`` of unique diagonal D's.
     """
     # Sample random z vectors uniformly in [-10, 10]
-    m = torch.rand(dim, n_points) * 20.0 - 10.0
+    m = torch.rand(dim, n_points, dtype=W2.dtype) * 20.0 - 10.0
 
     # Compute activation patterns: (W2 @ z + h2) > 0 for each column
     activations = W2 @ m + h2.unsqueeze(1)  # (H, n_points)
@@ -143,9 +143,9 @@ def construct_relu_matrix_pool(
 
     # Build diagonal matrices
     n_unique = unique_patterns.shape[0]
-    D_list = torch.zeros(n_unique, hidden_dim, hidden_dim)
+    D_list = torch.zeros(n_unique, hidden_dim, hidden_dim, dtype=W2.dtype)
     for k in range(n_unique):
-        D_list[k] = torch.diag(unique_patterns[k].float())
+        D_list[k] = torch.diag(unique_patterns[k].to(W2.dtype))
 
     return D_list
 
