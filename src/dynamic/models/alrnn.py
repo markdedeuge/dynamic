@@ -52,8 +52,9 @@ class ALRNN(nn.Module):
         Tensor
             Next state, same shape as input.
         """
-        phi = z.clone()
-        phi[..., -self.P :] = phi[..., -self.P :].clamp(min=0.0)
+        linear_part = z[..., : self.M - self.P]
+        relu_part = z[..., -self.P :].clamp(min=0.0)
+        phi = torch.cat([linear_part, relu_part], dim=-1)
         return self.A * z + phi @ self.W.T + self.h
 
     def get_D(self, z: Tensor) -> Tensor:

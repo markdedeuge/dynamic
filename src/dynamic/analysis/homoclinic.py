@@ -16,7 +16,10 @@ from dynamic.analysis.manifolds import ManifoldSegment
 
 
 def _segments_intersect_2d(
-    p1: Tensor, p2: Tensor, p3: Tensor, p4: Tensor,
+    p1: Tensor,
+    p2: Tensor,
+    p3: Tensor,
+    p4: Tensor,
 ) -> Tensor | None:
     """Check if line segments (p1-p2) and (p3-p4) intersect in 2D.
 
@@ -80,8 +83,10 @@ def find_homoclinic_intersections(
                 for i in range(len(s_pts) - 1):
                     for j in range(len(u_pts) - 1):
                         pt = _segments_intersect_2d(
-                            s_pts[i], s_pts[i + 1],
-                            u_pts[j], u_pts[j + 1],
+                            s_pts[i],
+                            s_pts[i + 1],
+                            u_pts[j],
+                            u_pts[j + 1],
                         )
                         if pt is not None:
                             # Check for duplicates
@@ -120,12 +125,9 @@ def analytical_homoclinic_2d(
 ) -> list[Tensor]:
     """Algorithm 4 (Appx I.2): analytical homoclinic detection for 2D.
 
-    For 2D PL maps, computes stable and unstable manifolds and checks
-    for intersections at subregion boundaries (z_i = 0 hyperplanes).
-
-    A homoclinic point exists when both manifolds cross the same
-    boundary segment — this is a fold point where the manifold is
-    tangent to the boundary.
+    For 2D PL maps, generates dense trajectory-based point clouds on
+    both stable and unstable manifolds, then checks for geometric
+    intersections.
 
     Parameters
     ----------
@@ -134,58 +136,121 @@ def analytical_homoclinic_2d(
     saddle : FixedPoint
         Saddle fixed point with eigenvalues and eigenvectors.
     N_s : int
-        Number of sample points for manifold construction.
+        Number of sample points / initial conditions.
     N_iter : int
-        Number of manifold expansion iterations.
+        Number of forward/backward iterations per trajectory.
 
     Returns
     -------
     list[Tensor]
         Detected homoclinic intersection points.
     """
-    from dynamic.analysis.manifolds import construct_manifold
+    import numpy as np
 
-    # Compute both manifolds with enough resolution
-    stable = construct_manifold(
-        model, saddle, sigma=+1, N_s=N_s, N_iter=N_iter,
+    evals = saddle.eigenvalues
+    evecs = saddle.eigenvectors
+
+    # Separate stable (|λ|<1) and unstable (|λ|>1) eigenvectors
+    stable_mask = np.abs(evals) < 1.0
+    unstable_mask = np.abs(evals) > 1.0
+
+    stable_dirs = torch.tensor(
+        evecs[:, stable_mask].real,
+        dtype=torch.float32,
     )
-    unstable = construct_manifold(
-        model, saddle, sigma=-1, N_s=N_s, N_iter=N_iter,
+    unstable_dirs = torch.tensor(
+        evecs[:, unstable_mask].real,
+        dtype=torch.float32,
     )
 
-    # Find intersections using geometric method
-    intersections = find_homoclinic_intersections(
-        stable, unstable, proximity_threshold=0.1,
+    p = saddle.z.detach()
+
+    # Generate dense unstable manifold by forward-iterating from
+    # perturbations along the unstable eigenvector(s)
+    unstable_trajectories: list[Tensor] = []
+    for sign in [-1.0, 1.0]:
+        for scale in [0.001, 0.005, 0.01, 0.05, 0.1]:
+            for col in range(unstable_dirs.shape[1]):
+                z = p + sign * scale * unstable_dirs[:, col]
+                traj = [z.detach().clone()]
+                with torch.no_grad():
+                    for _ in range(N_iter):
+                        z = model.forward(z)
+                        if not torch.all(torch.isfinite(z)):
+                            break
+                        traj.append(z.clone())
+                if len(traj) > 1:
+                    unstable_trajectories.append(torch.stack(traj))
+
+    # Generate dense stable manifold by forward-iterating many ICs
+    # and keeping trajectories that converge to the saddle
+    stable_trajectories: list[Tensor] = []
+
+    # Method 1: perturb along stable eigenvector and forward-iterate
+    for sign in [-1.0, 1.0]:
+        for scale in [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]:
+            for col in range(stable_dirs.shape[1]):
+                z = p + sign * scale * stable_dirs[:, col]
+                traj = [z.detach().clone()]
+                with torch.no_grad():
+                    for _ in range(N_iter):
+                        z = model.forward(z)
+                        if not torch.all(torch.isfinite(z)):
+                            break
+                        traj.append(z.clone())
+                        # If converged to saddle, this is on stable manifold
+                        if torch.norm(z - p) < 1e-6:
+                            break
+                if len(traj) > 1:
+                    stable_trajectories.append(torch.stack(traj))
+
+    # Method 2: random ICs — keep those whose trajectories pass near saddle
+    n_random = max(N_s, 500)
+    for _ in range(n_random):
+        z = p + torch.randn(2) * 3.0
+        traj = [z.detach().clone()]
+        min_dist = float("inf")
+        with torch.no_grad():
+            for _ in range(N_iter):
+                z = model.forward(z)
+                if not torch.all(torch.isfinite(z)):
+                    break
+                d = torch.norm(z - p).item()
+                if d < min_dist:
+                    min_dist = d
+                traj.append(z.clone())
+        # Keep trajectories that come close to saddle
+        if min_dist < 0.05 and len(traj) > 3:
+            stable_trajectories.append(torch.stack(traj))
+
+    # Collect all trajectory points into flat tensors for fast proximity check
+    u_all = (
+        torch.cat(unstable_trajectories) if unstable_trajectories else torch.empty(0, 2)
     )
+    s_all = torch.cat(stable_trajectories) if stable_trajectories else torch.empty(0, 2)
 
-    # Additionally check for boundary crossings (fold points)
-    # In 2D, a fold occurs when the manifold crosses z_i = 0
-    for s_seg in stable:
-        if s_seg.points.numel() == 0 or s_seg.points.dim() < 2:
-            continue
-        s_pts = s_seg.points
+    if u_all.shape[0] == 0 or s_all.shape[0] == 0:
+        return []
 
-        for u_seg in unstable:
-            if u_seg.points.numel() == 0 or u_seg.points.dim() < 2:
-                continue
-            u_pts = u_seg.points
+    # Remove points too close to the saddle to avoid trivial intersections
+    u_dists = torch.norm(u_all - p, dim=1)
+    s_dists = torch.norm(s_all - p, dim=1)
+    u_far = u_all[u_dists > 0.01]
+    s_far = s_all[s_dists > 0.01]
 
-            # Check z_1 = 0 boundary crossings
-            for dim in range(2):
-                s_crossings = _find_boundary_crossings(s_pts, dim)
-                u_crossings = _find_boundary_crossings(u_pts, dim)
+    if u_far.shape[0] == 0 or s_far.shape[0] == 0:
+        return []
 
-                # Match crossing points
-                for sc in s_crossings:
-                    for uc in u_crossings:
-                        if torch.norm(sc - uc) < 0.1:
-                            is_dup = any(
-                                torch.allclose(sc, ex, atol=1e-3)
-                                for ex in intersections
-                            )
-                            if not is_dup:
-                                mid = (sc + uc) / 2
-                                intersections.append(mid.detach())
+    # Vectorized proximity detection
+    dists = torch.cdist(u_far, s_far)
+    close = (dists < 0.05).nonzero()
+
+    intersections: list[Tensor] = []
+    for idx in close:
+        midpoint = (u_far[idx[0]] + s_far[idx[1]]) / 2
+        is_dup = any(torch.allclose(midpoint, ex, atol=0.05) for ex in intersections)
+        if not is_dup:
+            intersections.append(midpoint.detach())
 
     return intersections
 

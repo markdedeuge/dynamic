@@ -12,7 +12,10 @@ import os
 import numpy as np
 import torch
 
-from dynamic.analysis.homoclinic import find_homoclinic_intersections
+from dynamic.analysis.homoclinic import (
+    analytical_homoclinic_2d,
+    find_homoclinic_intersections,
+)
 from dynamic.analysis.lyapunov import compute_lyapunov_exponents
 from dynamic.analysis.manifolds import construct_manifold
 from dynamic.analysis.pl_map_model import PLMapModel
@@ -45,10 +48,15 @@ def find_fixed_points_exhaustive(model) -> list[FixedPoint]:
         if actual_bits != bits:
             continue
         evals, evecs = np.linalg.eig(J.detach().numpy())
-        fps.append(FixedPoint(
-            z=z_star.detach(), eigenvalues=evals, eigenvectors=evecs,
-            classification=classify_point(evals), region_id=bits,
-        ))
+        fps.append(
+            FixedPoint(
+                z=z_star.detach(),
+                eigenvalues=evals,
+                eigenvectors=evecs,
+                classification=classify_point(evals),
+                region_id=bits,
+            )
+        )
     return fps
 
 
@@ -75,10 +83,28 @@ def run_fig5():
         unstable = construct_manifold(model, saddle, sigma=-1, N_s=200, N_iter=20)
         print(f"  Stable: {len(stable)} segments, Unstable: {len(unstable)} segments")
 
-        # Detect homoclinic intersections
+        # Detect homoclinic intersections using both methods
         print("Detecting homoclinic intersections...")
-        intersections = find_homoclinic_intersections(stable, unstable)
-        print(f"  Found {len(intersections)} intersection(s)")
+        # Method 1: analytical (Algorithm 4), best for 2D PL maps
+        intersections = analytical_homoclinic_2d(
+            model,
+            saddle,
+            N_s=500,
+            N_iter=30,
+        )
+        print(f"  Analytical: {len(intersections)} intersection(s)")
+        # Method 2: geometric segment intersection as supplement
+        geom_intersections = find_homoclinic_intersections(
+            stable,
+            unstable,
+            proximity_threshold=0.1,
+        )
+        # Merge, deduplicating
+        for pt in geom_intersections:
+            is_dup = any(torch.allclose(pt, ex, atol=1e-3) for ex in intersections)
+            if not is_dup:
+                intersections.append(pt)
+        print(f"  Total: {len(intersections)} intersection(s)")
 
         # Plot state space with manifolds
         z0 = saddle.z + torch.tensor([0.01, 0.01])
@@ -130,7 +156,8 @@ def run_fig5():
         all_attractor_vals.append(np.array(vals) if vals else np.array([np.nan]))
 
     fig_bif = plot_bifurcation(
-        h1_values, all_attractor_vals,
+        h1_values,
+        all_attractor_vals,
         param_name="$h_1$",
         title="Fig 5C: Bifurcation Diagram",
     )
@@ -149,7 +176,8 @@ def run_fig5():
 
     lyap_arr = np.array(lyap_data)
     fig_lyap = plot_lyapunov_spectrum(
-        h1_lyap, lyap_arr,
+        h1_lyap,
+        lyap_arr,
         param_name="$h_1$",
         title="Fig 5D: Lyapunov Spectrum",
     )

@@ -29,24 +29,40 @@ from dynamic.analysis.subregions import get_D, get_neighbors, get_region_id
 
 
 def backward_step(model: nn.Module, z_t: Tensor, D: Tensor) -> Tensor:
-    """Single backward step: z_{t-1} = (A + WD)⁻¹(z_t - h).
+    """Single backward step: z_{t-1} = J⁻¹(z_t - h_eff).
+
+    Uses the model's Jacobian (works for PLRNN, ShallowPLRNN, and ALRNN)
+    rather than assuming ``model.W`` exists.
+
+    For a PLRNN in a given subregion:
+        F(z) = J z + h_eff  where J = get_jacobian(z), h_eff = F(0_region)
 
     Parameters
     ----------
     model : nn.Module
-        PLRNN model with ``A``, ``W``, ``h`` parameters.
+        Any PLRNN variant with ``get_jacobian`` and ``forward`` methods.
     z_t : Tensor
         Current state of shape ``(M,)``.
     D : Tensor
-        Diagonal activation matrix of shape ``(M, M)``.
+        Diagonal activation matrix of shape ``(M, M)`` (used for region).
 
     Returns
     -------
     Tensor
         Previous state of shape ``(M,)``.
     """
-    J = torch.diag(model.A) + model.W @ D
-    rhs = z_t - model.h
+    # Compute Jacobian at a representative point in this region
+    # Use a small positive value for active dims to stay in the correct region
+    M = z_t.shape[0]
+    z_rep = torch.zeros(M)
+    for i in range(M):
+        z_rep[i] = 0.1 if D[i, i].item() > 0.5 else -0.1
+
+    with torch.no_grad():
+        J = model.get_jacobian(z_rep)
+        # Compute effective bias: h_eff = F(z_rep) - J @ z_rep
+        h_eff = model.forward(z_rep) - J @ z_rep
+        rhs = z_t - h_eff
     return torch.linalg.solve(J, rhs)
 
 

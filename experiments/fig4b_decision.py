@@ -1,7 +1,8 @@
 """Fig 4B: Decision-Making Multistability.
 
 Trains ALRNN (M=15, P=6) on decision-making task data.
-Finds two stable FPs and saddle, computes stable manifold.
+Multi-seed training: trains N_SEEDS models, picks the one with the best
+saddle for manifold analysis.
 Target: Δ_σ ≈ 0.95 (Table 2, row 3).
 """
 
@@ -15,6 +16,7 @@ import torch
 from dynamic.analysis.manifolds import construct_manifold
 from dynamic.analysis.quality import delta_sigma_statistic
 from dynamic.analysis.scyfi import FixedPoint
+from dynamic.analysis.scyfi_vectorised import find_cycles_vectorised
 from dynamic.analysis.subregions import classify_point
 from dynamic.systems.decision import generate_trajectory
 from dynamic.training.configs import DECISION_CONFIG
@@ -22,13 +24,67 @@ from dynamic.training.trainer import SparseTeacherForcingTrainer
 from dynamic.viz.plotting import plot_state_space_3d
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+N_SEEDS = 10
+
+
+def _scyfi_fps_from_alrnn(model) -> list[FixedPoint]:
+    """Use VecC SCYFI to find fixed points in an ALRNN."""
+    all_cycles, all_eigvals = find_cycles_vectorised(
+        torch.diag(model.A.detach()),
+        model.W.detach(),
+        model.h.detach(),
+        max_order=1,
+        outer_loop_iterations=200,
+        inner_loop_iterations=500,
+        batch_size=64,
+        compiled=True,
+    )
+
+    fps = []
+    for order_idx in range(len(all_cycles)):
+        for cycle_idx, traj in enumerate(all_cycles[order_idx]):
+            z = traj[0].float()
+            evals = all_eigvals[order_idx][cycle_idx]
+            cls = classify_point(evals)
+
+            J = model.get_jacobian(z).detach().numpy()
+            evecs = np.linalg.eig(J)[1]
+
+            fps.append(
+                FixedPoint(
+                    z=z.detach(),
+                    eigenvalues=evals,
+                    eigenvectors=evecs,
+                    classification=cls,
+                    region_id=model.get_subregion_id(z),
+                )
+            )
+    return fps
+
+
+def _saddle_quality(fps: list[FixedPoint]) -> float:
+    """Score how well-separated the saddle eigenvalues are.
+
+    Requires both a saddle AND at least one stable FP for valid Δ_σ.
+    """
+    saddles = [fp for fp in fps if fp.classification == "saddle"]
+    stables = [fp for fp in fps if fp.classification == "stable"]
+    if not saddles or not stables:
+        return 0.0
+
+    best = 0.0
+    for s in saddles:
+        evals_abs = np.abs(s.eigenvalues)
+        separation = np.sum(np.abs(evals_abs - 1.0))
+        best = max(best, separation)
+    return best
 
 
 def run_fig4b():
-    """Run the decision-making multistability experiment."""
+    """Run the decision-making multistability experiment with multi-seed."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # Generate training data
+    # Generate training data from two different ICs (two choices)
     print("Generating decision-making data...")
     traj1 = generate_trajectory(x0=np.array([0.1, 0.0, 0.0]), T=20.0, dt=0.01)
     traj2 = generate_trajectory(x0=np.array([0.0, 0.1, 0.0]), T=20.0, dt=0.01)
@@ -38,56 +94,76 @@ def run_fig4b():
     data = torch.zeros(data_np.shape[0], M, dtype=torch.float32)
     data[:, :3] = torch.tensor(data_np, dtype=torch.float32)
 
-    # Train model
-    print(f"Training ALRNN (M={M}, P={DECISION_CONFIG.P})...")
-    torch.manual_seed(42)
-    model = DECISION_CONFIG.create_model()
-    epochs = min(DECISION_CONFIG.epochs, 2000)
-    trainer = SparseTeacherForcingTrainer(model, DECISION_CONFIG)
-    losses = trainer.train(data, epochs=epochs)
-    print(f"  Final loss: {losses[-1]:.6f}")
+    # Multi-seed training
+    print(f"Multi-seed training (N={N_SEEDS} seeds)...")
+    best_model = None
+    best_fps: list[FixedPoint] = []
+    best_score = -1.0
+    best_loss = float("inf")
 
-    # Find fixed points via iteration
-    print("Finding fixed points...")
-    all_fps = []
-    for _ in range(500):
-        z = torch.randn(M) * 0.5
-        with torch.no_grad():
-            for _ in range(500):
-                z_new = model.forward(z)
-                if torch.allclose(z, z_new, atol=1e-6):
-                    break
-                z = z_new
+    for seed in range(N_SEEDS):
+        torch.manual_seed(seed)
+        model = DECISION_CONFIG.create_model()
+        trainer = SparseTeacherForcingTrainer(model, DECISION_CONFIG)
+        losses = trainer.train(data, epochs=DECISION_CONFIG.epochs)
+        loss = losses[-1]
 
-        with torch.no_grad():
-            z_test = model.forward(z)
-        if torch.allclose(z, z_test, atol=1e-4):
-            J = model.get_jacobian(z).detach()
-            evals = np.linalg.eig(J.numpy())[0]
-            evecs = np.linalg.eig(J.numpy())[1]
-            cls = classify_point(evals)
-            is_dup = any(torch.allclose(z, fp.z, atol=1e-2) for fp in all_fps)
-            if not is_dup:
-                all_fps.append(FixedPoint(
-                    z=z.detach(), eigenvalues=evals, eigenvectors=evecs,
-                    classification=cls, region_id=model.get_subregion_id(z),
-                ))
+        fps = _scyfi_fps_from_alrnn(model)
+        score = _saddle_quality(fps)
+        n_saddles = sum(1 for fp in fps if fp.classification == "saddle")
 
-    print(f"  Found {len(all_fps)} fixed points")
+        print(
+            f"  Seed {seed}: loss={loss:.6f}, "
+            f"FPs={len(fps)} ({n_saddles} saddles), "
+            f"quality={score:.4f}"
+        )
+
+        if score > best_score or (score == best_score and loss < best_loss):
+            best_model = model
+            best_fps = fps
+            best_score = score
+            best_loss = loss
+
+    print(f"\nBest seed: quality={best_score:.4f}, loss={best_loss:.6f}")
+
+    all_fps = best_fps
+    model = best_model
+
+    print(f"  Found {len(all_fps)} fixed points:")
     for fp in all_fps:
         print(f"    {fp.classification}")
 
-    # Find saddle
     saddles = [fp for fp in all_fps if fp.classification == "saddle"]
     if saddles:
-        saddle = saddles[0]
+        saddle = max(
+            saddles,
+            key=lambda s: np.sum(np.abs(np.abs(s.eigenvalues) - 1.0)),
+        )
         print("Computing stable manifold...")
         stable = construct_manifold(model, saddle, sigma=+1, N_s=50, N_iter=10)
 
+        # Extract manifold points for Δ_σ threshold
+        manifold_pts_list = [
+            seg.points
+            for seg in stable
+            if seg.points.numel() > 0 and seg.points.dim() > 1
+        ]
+        if manifold_pts_list:
+            manifold_pts = torch.cat(manifold_pts_list)
+        else:
+            manifold_pts = None
+        n_mpts = len(manifold_pts) if manifold_pts is not None else 0
+        print(f"  Manifold points: {n_mpts}")
+
         delta_stat = delta_sigma_statistic(
-            model, saddle.z, sigma=+1,
-            U_min=saddle.z - 2.0, U_max=saddle.z + 2.0,
-            N_samples=50, k_max=100,
+            model,
+            saddle.z,
+            sigma=+1,
+            U_min=saddle.z - 2.0,
+            U_max=saddle.z + 2.0,
+            N_samples=100,
+            k_max=200,
+            manifold_points=manifold_pts,
         )
         print(f"  Δ_σ = {delta_stat:.4f}  (target ≈ 0.95)")
 
@@ -98,7 +174,7 @@ def run_fig4b():
             title=f"Fig 4B: Decision-Making (Δ_σ = {delta_stat:.2f})",
         )
     else:
-        print("  No saddle found.")
+        print("  No saddle found across all seeds.")
         fig = plot_state_space_3d(
             fixed_points=all_fps,
             dims=(0, 1, 2),
