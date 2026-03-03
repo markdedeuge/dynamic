@@ -160,6 +160,44 @@ class TestManifoldFitting:
         assert not segment.is_curved
         assert segment.eigenvectors.shape[1] == 2
 
+    def test_sample_rejection(self):
+        """Sampled points stay within bounded neighborhood of saddle."""
+        from dynamic.analysis.manifolds import (
+            compute_local_manifold,
+            sample_on_manifold,
+        )
+
+        model, fp = _make_saddle_model_and_fp()
+        segment = compute_local_manifold(model, fp, sigma=-1)
+        points = sample_on_manifold(segment, N_s=100, scales=[0.01])
+        # All points should be within reasonable distance
+        dists = torch.norm(points - fp.z, dim=1)
+        assert torch.all(dists < 1.0), (
+            f"Some points are too far: max={dists.max():.3f}"
+        )
+
+    def test_kpca_captures_curve(self):
+        """kPCA on curved data with complex eigenvalues → is_curved=True."""
+        from dynamic.analysis.manifolds import fit_manifold_segment
+
+        # Generate spiral data in 3D
+        t = np.linspace(0, 4 * np.pi, 100)
+        x = np.cos(t) * 0.5
+        y = np.sin(t) * 0.5
+        z = t * 0.1
+        points = torch.tensor(
+            np.column_stack([x, y, z]), dtype=torch.float32,
+        )
+
+        # Complex eigenvalues trigger kPCA path
+        segment = fit_manifold_segment(
+            points,
+            eigenvalues=np.array([0.5 + 0.3j, 0.5 - 0.3j]),
+            support_point=torch.tensor([0.0, 0.0, 0.0]),
+            region_id=(1, 1, 1),
+        )
+        assert segment.is_curved
+
 
 class TestFullManifoldConstruction:
     """Tests for full Algorithm 1 construction."""

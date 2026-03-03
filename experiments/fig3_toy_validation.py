@@ -13,6 +13,7 @@ import numpy as np
 import torch
 
 from dynamic.analysis.manifolds import construct_manifold
+from dynamic.analysis.pl_map_model import PLMapModel
 from dynamic.analysis.quality import delta_sigma_statistic
 from dynamic.analysis.scyfi import FixedPoint
 from dynamic.analysis.subregions import classify_point
@@ -20,51 +21,6 @@ from dynamic.systems.pl_map import PLMap
 from dynamic.viz.plotting import plot_state_space_2d
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
-
-
-class PLMapModel(torch.nn.Module):
-    """Thin nn.Module wrapper around PL map (A + WD) z + h.
-
-    Uses the full A matrix from to_plrnn_params(), unlike the diagonal-A
-    PLRNN class. Provides the same get_jacobian/get_D/get_subregion_id API.
-    """
-
-    def __init__(self, pl_map: PLMap):
-        super().__init__()
-        params = pl_map.to_plrnn_params()
-        self.A = torch.nn.Parameter(
-            torch.as_tensor(params["A"], dtype=torch.float32),
-        )
-        self.W = torch.nn.Parameter(
-            torch.as_tensor(params["W"], dtype=torch.float32),
-        )
-        self.h = torch.nn.Parameter(
-            torch.as_tensor(params["h"], dtype=torch.float32),
-        )
-        self.M = self.h.shape[0]
-
-    def forward(self, z: torch.Tensor) -> torch.Tensor:
-        D = torch.diag((z > 0).float())
-        return (self.A + self.W @ D) @ z + self.h
-
-    def get_D(self, z: torch.Tensor) -> torch.Tensor:
-        return torch.diag((z > 0).float())
-
-    def get_jacobian(self, z: torch.Tensor) -> torch.Tensor:
-        D = self.get_D(z)
-        return self.A + self.W @ D
-
-    def get_subregion_id(self, z: torch.Tensor) -> tuple:
-        return tuple(int(x > 0) for x in z.tolist())
-
-    def forward_trajectory(self, z0: torch.Tensor, T: int) -> torch.Tensor:
-        traj = [z0]
-        z = z0
-        with torch.no_grad():
-            for _ in range(T):
-                z = self.forward(z)
-                traj.append(z)
-        return torch.stack(traj)
 
 
 def find_saddle_points(model) -> list[FixedPoint]:
@@ -162,5 +118,128 @@ def run_fig3():
     return delta_stat
 
 
+def find_all_fixed_points(model) -> list[FixedPoint]:
+    """Find all fixed points (stable, unstable, saddle) exhaustively."""
+    M = model.M
+    fps = []
+
+    for quad in range(2**M):
+        bits = tuple((quad >> i) & 1 for i in range(M))
+        D = torch.diag(torch.tensor(bits, dtype=torch.float32))
+        J = model.A + model.W @ D
+        I_minus_J = torch.eye(M) - J
+
+        try:
+            z_star = torch.linalg.solve(I_minus_J, model.h)
+        except torch.linalg.LinAlgError:
+            continue
+
+        actual_bits = tuple(int(z_star[i] > 0) for i in range(M))
+        if actual_bits != bits:
+            continue
+
+        evals, evecs = np.linalg.eig(J.detach().numpy())
+        fps.append(FixedPoint(
+            z=z_star.detach(),
+            eigenvalues=evals,
+            eigenvectors=evecs,
+            classification=classify_point(evals),
+            region_id=bits,
+        ))
+
+    return fps
+
+
+def run_fig3b():
+    """Run Fig 3B: period-3/4 cycle basins of attraction.
+
+    Uses PLMap.fig3b_left (period-4) and PLMap.fig3b_right (period-3).
+    Finds fixed points and saddles, computes stable manifolds to
+    delineate basins, and generates basin plots.
+    """
+    from dynamic.viz.plotting import plot_basins_2d
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    configs = [
+        ("fig3b_left (period-4)", PLMap.fig3b_left()),
+        ("fig3b_right (period-3)", PLMap.fig3b_right()),
+    ]
+
+    for name, pl_map in configs:
+        print(f"\n=== {name} ===")
+        model = PLMapModel(pl_map)
+
+        # Find all fixed points
+        all_fps = find_all_fixed_points(model)
+        print(f"  Found {len(all_fps)} fixed points:")
+        for fp in all_fps:
+            print(
+                f"    {fp.classification}:"
+                f" z={fp.z.numpy()}, λ={fp.eigenvalues}"
+            )
+
+        # Generate trajectories from various initial conditions
+        trajs = []
+        for ic in [
+            torch.tensor([0.5, 0.5]),
+            torch.tensor([-0.5, 0.3]),
+            torch.tensor([0.3, -0.5]),
+            torch.tensor([-0.3, -0.3]),
+        ]:
+            traj = model.forward_trajectory(ic, T=200)
+            trajs.append(traj.numpy())
+
+        # Compute stable manifolds of saddles
+        saddles = [
+            fp for fp in all_fps if fp.classification == "saddle"
+        ]
+        all_manifolds = []
+        for saddle in saddles:
+            stable = construct_manifold(
+                model, saddle, sigma=+1, N_s=100, N_iter=10,
+            )
+            all_manifolds.extend(stable)
+
+        # State space plot with trajectories and manifolds
+        fig = plot_state_space_2d(
+            trajectories=trajs,
+            fixed_points=all_fps,
+            manifolds=all_manifolds,
+            manifold_type="stable",
+            title=f"Fig 3B: {name}",
+        )
+        safe_name = name.replace(" ", "_").replace("(", "").replace(")", "")
+        fig.savefig(
+            os.path.join(OUTPUT_DIR, f"fig3b_{safe_name}.png"),
+            dpi=150,
+        )
+        print("  Saved state space plot")
+
+        # Basin plot
+        stable_fps = [
+            fp for fp in all_fps if fp.classification == "stable"
+        ]
+        if stable_fps:
+            fig_basin = plot_basins_2d(
+                model, stable_fps,
+                x_range=(-2.0, 2.0), y_range=(-2.0, 2.0),
+                resolution=80,
+                title=f"Fig 3B Basins: {name}",
+            )
+            fig_basin.savefig(
+                os.path.join(
+                    OUTPUT_DIR, f"fig3b_basins_{safe_name}.png",
+                ),
+                dpi=150,
+            )
+            print("  Saved basin plot")
+        else:
+            print("  No stable FPs found — skipping basin plot")
+
+    print(f"\nAll saved to {OUTPUT_DIR}/")
+
+
 if __name__ == "__main__":
     run_fig3()
+    run_fig3b()

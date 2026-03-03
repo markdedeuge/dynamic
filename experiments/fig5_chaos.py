@@ -15,6 +15,7 @@ import torch
 from dynamic.analysis.homoclinic import find_homoclinic_intersections
 from dynamic.analysis.lyapunov import compute_lyapunov_exponents
 from dynamic.analysis.manifolds import construct_manifold
+from dynamic.analysis.pl_map_model import PLMapModel
 from dynamic.analysis.scyfi import FixedPoint
 from dynamic.analysis.subregions import classify_point
 from dynamic.systems.pl_map import PLMap
@@ -25,46 +26,6 @@ from dynamic.viz.plotting import (
 )
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
-
-
-class PLMapModel(torch.nn.Module):
-    """Thin nn.Module wrapper around PL map (A + WD) z + h."""
-
-    def __init__(self, pl_map: PLMap):
-        super().__init__()
-        params = pl_map.to_plrnn_params()
-        self.A = torch.nn.Parameter(
-            torch.as_tensor(params["A"], dtype=torch.float32),
-        )
-        self.W = torch.nn.Parameter(
-            torch.as_tensor(params["W"], dtype=torch.float32),
-        )
-        self.h = torch.nn.Parameter(
-            torch.as_tensor(params["h"], dtype=torch.float32),
-        )
-        self.M = self.h.shape[0]
-
-    def forward(self, z: torch.Tensor) -> torch.Tensor:
-        D = torch.diag((z > 0).float())
-        return (self.A + self.W @ D) @ z + self.h
-
-    def get_D(self, z: torch.Tensor) -> torch.Tensor:
-        return torch.diag((z > 0).float())
-
-    def get_jacobian(self, z: torch.Tensor) -> torch.Tensor:
-        return self.A + self.W @ self.get_D(z)
-
-    def get_subregion_id(self, z: torch.Tensor) -> tuple:
-        return tuple(int(x > 0) for x in z.tolist())
-
-    def forward_trajectory(self, z0: torch.Tensor, T: int) -> torch.Tensor:
-        traj = [z0]
-        z = z0
-        with torch.no_grad():
-            for _ in range(T):
-                z = self.forward(z)
-                traj.append(z)
-        return torch.stack(traj)
 
 
 def find_fixed_points_exhaustive(model) -> list[FixedPoint]:

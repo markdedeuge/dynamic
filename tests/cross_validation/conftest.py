@@ -7,7 +7,6 @@ Installs required Julia packages (Distributions) on first run.
 import os
 import shutil
 
-import numpy as np
 import pytest
 import torch
 

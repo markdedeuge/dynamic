@@ -110,3 +110,97 @@ def find_homoclinic_intersections(
                         intersections.append(midpoint.detach())
 
     return intersections
+
+
+def analytical_homoclinic_2d(
+    model,
+    saddle,
+    N_s: int = 500,
+    N_iter: int = 30,
+) -> list[Tensor]:
+    """Algorithm 4 (Appx I.2): analytical homoclinic detection for 2D.
+
+    For 2D PL maps, computes stable and unstable manifolds and checks
+    for intersections at subregion boundaries (z_i = 0 hyperplanes).
+
+    A homoclinic point exists when both manifolds cross the same
+    boundary segment — this is a fold point where the manifold is
+    tangent to the boundary.
+
+    Parameters
+    ----------
+    model : nn.Module
+        2D PLRNN or PLMapModel with A, W, h parameters.
+    saddle : FixedPoint
+        Saddle fixed point with eigenvalues and eigenvectors.
+    N_s : int
+        Number of sample points for manifold construction.
+    N_iter : int
+        Number of manifold expansion iterations.
+
+    Returns
+    -------
+    list[Tensor]
+        Detected homoclinic intersection points.
+    """
+    from dynamic.analysis.manifolds import construct_manifold
+
+    # Compute both manifolds with enough resolution
+    stable = construct_manifold(
+        model, saddle, sigma=+1, N_s=N_s, N_iter=N_iter,
+    )
+    unstable = construct_manifold(
+        model, saddle, sigma=-1, N_s=N_s, N_iter=N_iter,
+    )
+
+    # Find intersections using geometric method
+    intersections = find_homoclinic_intersections(
+        stable, unstable, proximity_threshold=0.1,
+    )
+
+    # Additionally check for boundary crossings (fold points)
+    # In 2D, a fold occurs when the manifold crosses z_i = 0
+    for s_seg in stable:
+        if s_seg.points.numel() == 0 or s_seg.points.dim() < 2:
+            continue
+        s_pts = s_seg.points
+
+        for u_seg in unstable:
+            if u_seg.points.numel() == 0 or u_seg.points.dim() < 2:
+                continue
+            u_pts = u_seg.points
+
+            # Check z_1 = 0 boundary crossings
+            for dim in range(2):
+                s_crossings = _find_boundary_crossings(s_pts, dim)
+                u_crossings = _find_boundary_crossings(u_pts, dim)
+
+                # Match crossing points
+                for sc in s_crossings:
+                    for uc in u_crossings:
+                        if torch.norm(sc - uc) < 0.1:
+                            is_dup = any(
+                                torch.allclose(sc, ex, atol=1e-3)
+                                for ex in intersections
+                            )
+                            if not is_dup:
+                                mid = (sc + uc) / 2
+                                intersections.append(mid.detach())
+
+    return intersections
+
+
+def _find_boundary_crossings(points: Tensor, dim: int) -> list[Tensor]:
+    """Find points where a sequence crosses z_dim = 0.
+
+    Returns interpolated crossing points.
+    """
+    crossings: list[Tensor] = []
+    for i in range(len(points) - 1):
+        v0 = points[i, dim].item()
+        v1 = points[i + 1, dim].item()
+        if v0 * v1 < 0:  # sign change
+            t = abs(v0) / (abs(v0) + abs(v1))
+            crossing = points[i] * (1 - t) + points[i + 1] * t
+            crossings.append(crossing.detach())
+    return crossings

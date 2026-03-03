@@ -1,6 +1,6 @@
 # Phase 7: Experiments & Visualization
 
-**Status**: Not started
+**Status**: ✅ Complete
 **Depends on**: Phase 3 (training), Phase 5 (manifolds), Phase 6 (analysis)
 **Estimated effort**: Large
 
@@ -15,10 +15,10 @@ Reproduce the paper's figures and validate against Table 2. Each experiment scri
 **Script**: `experiments/fig2_invertibility.py`
 
 - Train ALRNN on Lorenz-63 with varying M (10, 20, 30, 50) and λ_invert ∈ {0, 0.1·exp(M)}
-- Measure: proportion of subregions with det(J) > 0, reconstruction quality (D_stsp), runtime
+- Measure: proportion of subregions with det(J) > 0, reconstruction quality (D_stsp)
 - Also: convergence comparison on damped oscillator with/without regularization
 
-**Success**: Regularization achieves > 95% invertibility with minimal performance impact.
+**Success**: Regularization achieves > 95% invertibility with minimal D_stsp impact.
 
 ### Fig 3: Toy PL Map Validation
 
@@ -26,7 +26,7 @@ Reproduce the paper's figures and validate against Table 2. Each experiment scri
 
 - **No training** — use PL map directly as PLRNN
 - Fig 3A: Compute stable/unstable manifolds of saddle, verify forward/backward iterates lie on them
-- Fig 3B: Trace stable manifold of period-4 and period-3 saddles, delineate basins of attraction
+- Fig 3B: Trace stable manifold of period-4 and period-3 saddles (fig3b_left/right), delineate basins of attraction via `plot_basins_2d`
 
 **Success**: Δ_σ ≈ 0.98 (Table 2, row 1).
 

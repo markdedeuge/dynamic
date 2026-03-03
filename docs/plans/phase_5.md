@@ -75,7 +75,7 @@ def backward_step(model, z_t: Tensor, D: Tensor) -> Tensor
 def verify_forward(model, z_prev: Tensor, z_target: Tensor, tol: float) -> bool
     """Check F(z_prev) ≈ z_target."""
 
-def try_previous_regions(model, D_pool, z_t, z_candidate) -> Tensor | None
+def try_previous_regions(model, D_pool, z_t, tol) -> Tensor | None
     """Try inversion using previously visited D matrices."""
 
 def try_bitflips(model, z_t: Tensor, z_candidate: Tensor) -> Tensor | None
@@ -98,13 +98,13 @@ class ManifoldSegment:
 def compute_local_manifold(model, saddle: FixedPoint, sigma: int) -> ManifoldSegment
     """Eigenvector decomposition at saddle, sigma=+1 stable, -1 unstable."""
 
-def sample_on_manifold(segment: ManifoldSegment, N_s: int, c: float) -> Tensor
+def sample_on_manifold(segment: ManifoldSegment, N_s: int, scales: list[float]) -> Tensor
     """Eigenvalue-rescaled GMM sampling with rejection."""
 
 def propagate_to_next_region(model, points: Tensor, sigma: int) -> dict[tuple, Tensor]
     """Push points forward/backward, group by destination subregion."""
 
-def fit_manifold_segment(points: Tensor, eigenvalues: ndarray) -> ManifoldSegment
+def fit_manifold_segment(points: Tensor, eigenvalues: ndarray, support_point: Tensor, region_id: tuple) -> ManifoldSegment
     """PCA (real eigenvalues) or kPCA (complex/defective)."""
 
 def construct_manifold(

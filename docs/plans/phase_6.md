@@ -71,8 +71,10 @@ def delta_sigma(
     """Manifold convergence metric (Eq 6)."""
 
 def delta_sigma_statistic(
-    model, saddle: FixedPoint, manifold: list[ManifoldSegment],
-    U_bounds: tuple, N_samples: int = 1000,
+    model, saddle: Tensor, sigma: int,
+    U_min: Tensor, U_max: Tensor,
+    N_samples: int = 1000, k_max: int = 500,
+    manifold_points: Tensor | None = None,
 ) -> float
     """Full Δ_σ quality statistic."""
 ```
@@ -86,7 +88,7 @@ def find_homoclinic_intersections(
 ) -> list[Tensor]
     """Find intersection points between stable and unstable manifolds."""
 
-def analytical_homoclinic_2d(pl_map_params: dict) -> list[Tensor] | None
+def analytical_homoclinic_2d(model, saddle, N_s: int, N_iter: int) -> list[Tensor]
     """Algorithm 4 (Appx I.2): analytical homoclinic detection for 2D PL maps."""
 ```
 

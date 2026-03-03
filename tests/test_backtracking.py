@@ -63,6 +63,20 @@ class TestBackwardStep:
         z_fwd = simple_model.forward(z_prev)
         assert torch.allclose(z_fwd, z, atol=1e-8)
 
+    def test_backward_correct_region(self, simple_model):
+        """Backward step z_prev has sign pattern matching assumed D."""
+        from dynamic.analysis.backtracking import backward_step
+        from dynamic.analysis.subregions import get_region_id
+
+        z = torch.tensor([1.0, 1.0, 1.0])
+        D = torch.eye(3)  # all positive = region (1, 1, 1)
+        z_prev = backward_step(simple_model, z, D)
+        region = get_region_id(z_prev)
+        expected = (1, 1, 1)
+        assert region == expected, (
+            f"Region mismatch: {region} != {expected}"
+        )
+
 
 class TestVerifyForward:
     """Tests for forward verification."""
